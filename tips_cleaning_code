@@ -1,0 +1,187 @@
+
+#1. Descripción del dataset.
+
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+import re
+from scipy.stats import shapiro, iqr, mannwhitneyu, kruskal
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import cross_val_score
+
+sns.set()
+df = sns.load_dataset('tips')
+
+def add_na(row):
+    
+    row['total_bill'] = '$' + str(row.total_bill)
+    row['tip'] = '$' + str(row.tip)
+                                
+    if np.random.randint(0, 100) < 3:
+        row['total_bill'] = np.nan
+    if np.random.randint(0, 100) < 3:
+        row['tip'] = np.nan
+        
+    return row
+
+df = df.apply(add_na, axis=1)
+
+tips = df
+del(df)
+tips.head()
+
+#2. Integración y selección de los datos de interés a analizar.
+
+def recode_gender(gender):
+    
+    if gender == 'Female':
+        return 0
+
+    elif gender == 'Male':
+        return 1
+
+    else:
+        return np.nan
+    
+    
+def recode_day(day):
+    
+    if day in ['Sat', 'Sun']:
+        return 0
+
+    elif day in ['Thur', 'Fri']:
+        return 1
+
+    else:
+        return np.nan   
+    
+    
+def recode_bill(bill, lim=1000):
+    
+    b = np.round(bill)
+    
+    if b <= 10:
+        return 0
+
+    elif b <= 20:
+        return 1
+    
+    elif b <= lim:
+        return 2
+
+    else:
+        return np.nan  
+    
+
+tips['sex'] = tips.sex.apply(recode_gender)
+tips['day'] = tips.day.apply(recode_day)
+
+tips = tips[['tip', 'total_bill', 'sex', 'day']]
+tips.head()
+
+#3. Limpieza de los datos.
+
+#3.1. Valores perdidos.
+
+tips.info()
+
+tips.dropna(inplace=True)
+
+tips['total_bill'] = tips.total_bill.apply(lambda x: re.findall('\d+\.\d+', x)[0])
+tips['tip'] = tips.tip.apply(lambda x: re.findall('\d+\.\d+', x)[0])
+
+tips['total_bill'] = pd.to_numeric(tips.total_bill, errors='coerce')
+tips['tip'] = pd.to_numeric(tips.tip, errors='coerce')
+
+tips['total_bill_rec'] = tips['total_bill'].apply(recode_bill)
+
+tips.info()
+
+
+#3.2. Valores extremos.
+
+tips.boxplot(column=['total_bill', 'tip'])
+plt.title('Boxplot of Total Bill & Tip')
+plt.ylabel('Counts')
+plt.show()
+
+def outliers_to_na(series):
+    s = series.copy()
+    sup, inf = np.percentile(s, 75) + 3 * iqr(s), np.percentile(s, 25) - 3 * iqr(s)
+    s.loc[np.logical_or(s > sup, s < inf)] = s.loc[~np.logical_or(s > sup, s < inf)].median()
+    return s
+
+tips['tip'] = outliers_to_na(tips.tip)
+tips['total_bill'] = outliers_to_na(tips.total_bill)
+
+tips.boxplot(column=['total_bill', 'tip'])
+plt.title('Boxplot of Total Bill & Tip')
+plt.ylabel('Counts')
+plt.show()
+
+#4. Análisis de los datos.
+
+#4.1. Comprobación de la normalidad y homogeneidad de la varianza.
+
+plt.subplot(2, 1, 1)
+plt.hist(tips.total_bill, facecolor='r', density=True)
+plt.title('Histogram of Total Bill')
+plt.grid(True)
+
+plt.subplot(2, 1, 2)
+plt.hist(tips.tip, density=True)
+plt.title('Histogram of Tips')
+
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+sha_total_bill = shapiro(tips.total_bill)
+sha_tips = shapiro(tips.tip)
+print(f'Los resultados de los test son {sha_total_bill[1]} y {sha_tips[1]}, por lo tanto, ambos test son no significativos y ambas distribuciones no-normales.')
+
+#4.2. Aplicación de pruebas estadísticas para comparar los grupos de datos.
+
+sns.violinplot(x='sex', y='tip', data=tips)
+plt.xticks(np.arange(2), ['Female', 'Male'])
+plt.show()
+
+sns.violinplot(x='day', y='tip', data=tips)
+plt.xticks(np.arange(2), ['Weekday', 'Weekend'])
+plt.show()
+
+sns.violinplot(x='total_bill_rec', y='tip', data=tips)
+plt.xticks(np.arange(3), ['-10$', '10-20$', '+20$'])
+plt.show()
+
+sexm = mannwhitneyu(tips.loc[tips.sex == 0, 'tip'], tips.loc[tips.sex == 1, 'tip'], alternative='two-sided')[1]
+
+print(f'La prueba del test estadístico respecto al genero es {sexm}. Por lo tanto, no hay diferencias entre ambos grupos')
+
+daym = mannwhitneyu(tips.loc[tips.day == 0, 'tip'], tips.loc[tips.day == 1, 'tip'], alternative='two-sided')[1]
+
+print(f'La prueba del test estadístico respecto a la temporalidad es {daym}. Por lo tanto, no hay diferencias entre ambos grupos. Aun así parece que con una muestra mayor podriamos conseguir diferenciar ambos grupos (aunque esta diferencia fuera menor).')
+
+totalm = kruskal(tips.loc[tips.total_bill_rec == 0, 'tip'],
+        tips.loc[tips.total_bill_rec == 1, 'tip'],
+        tips.loc[tips.total_bill_rec == 2, 'tip']       
+)[1]
+
+La prueba del test estadístico respecto al importe total es 1.0668518874261511e-17. Por lo tanto, hay diferencias entre los diferentes grupos. Como hemos podido observar en el gráfico la diferencia es entre los dos grupos mas polarizados.
+
+#4.3. Aplicación de algoritmos de Machine Learning para predecir la variable independiente
+
+
+X = tips.drop(columns=['tip', 'total_bill_rec']).to_numpy()
+y = tips.tip.to_numpy()
+
+reg = LinearRegression()
+reg.fit(X, y)
+reg.score(X, y)
+
+cross_val_score(LinearRegression(), X, y, cv=10).mean()
+
+
+cross_val_score(DecisionTreeRegressor(), X, y, cv=10).mean()
